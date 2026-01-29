@@ -1,0 +1,17 @@
+cat > .gitignore << 'EOF'
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / cache
+*.log
+cache/
+*.cache
+
+# Build/IDE
+.vscode/
+.idea/
+
+# Se tiver node em algum momento
+node_modules/
+EOF
