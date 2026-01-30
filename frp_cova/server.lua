@@ -1,4 +1,5 @@
 -- server.lua
+print('[FRP_COVA] server.lua carregou')
 
 local TEMPO_MAX = 30                 -- tem que bater com o client
 local COOLDOWN_SEG = 120             -- 2 minutos por player
@@ -39,7 +40,7 @@ end
 
 local function giveItem(src, itemName, amount)
   -- exports.vorp_inventory:addItem(src, itemName, amount)
-  -- TriggerEvent("vorpCore:addItem", src, itemName, amount)
+  TriggerEvent("vorpCore:addItem", src, itemName, amount)
   print(("[COVAS] Dar item %s x%d para %d (placeholder)"):format(itemName, amount, src))
 
   -- feedback pro client (opcional)
@@ -118,3 +119,23 @@ AddEventHandler("playerDropped", function()
   local src = source
   active[src] = nil
 end)
+
+
+RegisterCommand("testcova", function(source)
+  if source == 0 then
+    print("[FRP_COVA] /testcova foi executado no CONSOLE. Use no chat do jogador: /testcova")
+    return
+  end
+
+  local src = source
+  local picked = weightedRandom(lootTable)
+  local amount = math.random(picked.min or 1, picked.max or 1)
+
+  print(("[FRP_COVA] CMD /testcova -> %s x%d para %d"):format(picked.item, amount, src))
+
+  -- usa o export (mais confiável no VORP recipe)
+  exports.vorp_inventory:addItem(src, picked.item, amount)
+
+  -- notify (só vai aparecer se seu client tiver covas:notify)
+  TriggerClientEvent("covas:notify", src, ("(TESTE) Você recebeu: ~g~%sx%d~s~"):format(picked.item, amount))
+end, false)
