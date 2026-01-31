@@ -1,8 +1,8 @@
 -- server.lua
 print('[FRP_COVA] server.lua carregou')
 
-local TEMPO_MAX = 30                 -- tem que bater com o client
-local COOLDOWN_SEG = 120             -- 2 minutos por player
+local TEMPO_MAX = 3                 -- tem que bater com o client
+local COOLDOWN_SEG = 10             -- 10 seg por player
 local DIST_MAX = 5.0                 -- validação extra
 
 -- tabela simples de controle
@@ -38,6 +38,9 @@ local function weightedRandom(tbl)
   return tbl[#tbl]
 end
 
+
+
+
 local function giveItem(src, itemName, amount)
   -- exports.vorp_inventory:addItem(src, itemName, amount)
   TriggerEvent("vorpCore:addItem", src, itemName, amount)
@@ -51,18 +54,60 @@ local function notify(src, msg)
   TriggerClientEvent("covas:notify", src, msg)
 end
 
+local SHOVEL_ITEM = "shovel"
+
+local function hasItem(src, item, amount)
+  amount = amount or 1
+
+  local p = promise.new()
+  local resolved = false
+
+  local ok = pcall(function()
+    exports.vorp_inventory:getItemCount(src, function(count)
+      if resolved then return end
+      resolved = true
+      p:resolve(tonumber(count) or 0)
+    end, item)
+  end)
+
+  if not ok then
+    return false
+  end
+
+  -- timeout de 1500ms pra evitar await infinito
+  SetTimeout(1500, function()
+    if resolved then return end
+    resolved = true
+    p:resolve(0)
+  end)
+
+  local count = Citizen.Await(p)
+  return count >= amount
+end
+
 -- client pode chamar quando começa (opcional, mas recomendado)
 RegisterNetEvent("covas:iniciarRoubo", function(covaIndex)
   local src = source
   local now = os.time()
 
+  print(("[COVAS] iniciarRoubo recebido: src=%d cova=%s"):format(src, tostring(covaIndex)))
+  
+  if not hasItem(src, SHOVEL_ITEM, 1) then
+    notify(src, "~r~Você precisa de uma pá (shovel) para cavar esta cova.~s~")
+    TriggerClientEvent("covas:cancelarRoubo", src)
+    return
+  end
+
   if lastRob[src] and (now - lastRob[src]) < COOLDOWN_SEG then
     local falta = COOLDOWN_SEG - (now - lastRob[src])
     notify(src, ("~r~Aguarde %ds para roubar novamente.~s~"):format(falta))
+    TriggerClientEvent("covas:cancelarRoubo", src)
     return
   end
 
   active[src] = { startedAt = now, cova = tonumber(covaIndex) or 0 }
+  print(("[COVAS] APROVADO: src=%d cova=%d"):format(src, active[src].cova))
+  TriggerClientEvent("covas:inicioAprovado", src, active[src].cova)
   notify(src, "~b~Você começou a roubar a cova...~s~")
 end)
 
@@ -77,7 +122,13 @@ RegisterNetEvent("covas:finalizarRoubo", function(covaIndex)
     return
   end
 
-  -- valida tempo mínimo
+  -- revalida shovel (anti-drop)
+  if not hasItem(src, SHOVEL_ITEM, 1) then
+    notify(src, "~r~Roubo cancelado: pá não encontrada.~s~")
+    active[src] = nil
+    return
+  end
+
   local elapsed = now - st.startedAt
   if elapsed < TEMPO_MAX then
     notify(src, "~r~Roubo inválido (tempo insuficiente).~s~")
@@ -85,27 +136,22 @@ RegisterNetEvent("covas:finalizarRoubo", function(covaIndex)
     return
   end
 
-  -- valida o índice (opcional)
   if tonumber(covaIndex) ~= st.cova then
     notify(src, "~r~Roubo inválido (cova divergente).~s~")
     active[src] = nil
     return
   end
 
-  -- aplica cooldown
   lastRob[src] = now
   active[src] = nil
 
-  -- chance de não vir nada (ex: 20%)
   if math.random(1, 100) <= 20 then
     notify(src, "~y~Você não encontrou nada dessa vez.~s~")
     return
   end
 
-  -- sorteio ponderado
   local picked = weightedRandom(lootTable)
   local amount = math.random(picked.min or 1, picked.max or 1)
-
   giveItem(src, picked.item, amount)
 end)
 
@@ -138,4 +184,15 @@ RegisterCommand("testcova", function(source)
 
   -- notify (só vai aparecer se seu client tiver covas:notify)
   TriggerClientEvent("covas:notify", src, ("(TESTE) Você recebeu: ~g~%sx%d~s~"):format(picked.item, amount))
+end, false)
+
+
+RegisterCommand("darpá", function(source)
+  if source == 0 then return end
+  local src = source
+
+  -- padrão que você já usa no script
+  TriggerEvent("vorpCore:addItem", src, "shovel", 1)
+
+  TriggerClientEvent("covas:notify", src, "~g~Você recebeu uma pá (shovel).~s~")
 end, false)
