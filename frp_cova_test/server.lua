@@ -1,164 +1,163 @@
 -- server.lua
 print('[FRP_COVA] server.lua carregou')
 
--- CONFIG
-local TEMPO_MIN = 30        -- tempo mínimo roubando (segundos)
-local COOLDOWN_SEG = 120    -- cooldown por player
-local DIST_MAX = 5.0        -- reservado p/ validação futura
+local TEMPO_MAX = 3                 -- tem que bater com o client
+local COOLDOWN_SEG = 120             -- 2 minutos por player
+local DIST_MAX = 5.0                 -- validação extra
 
--- CONTROLE
+-- tabela simples de controle
 local lastRob = {}   -- lastRob[src] = os.time()
-local active  = {}   -- active[src] = { startedAt = os.time(), cova = X }
+local active = {}    -- active[src] = { startedAt = os.time(), cova = X }
 
--- LOOT TABLE
+-- itens / pesos (quanto maior o peso, mais chance)
+--ajuste ideal com o dono do servidor
 local lootTable = {
-  { item = "moedas_antigas",    min = 1, max = 5, weight = 30 },
-  { item = "moedas_prata",      min = 1, max = 3, weight = 25 },
-  { item = "cachimbo_antigo",   min = 1, max = 1, weight = 15 },
-  { item = "fivela_cinto",      min = 1, max = 1, weight = 15 },
+  -- comuns
+  { item = "moedas_antigas",  min = 1, max = 5, weight = 30 },
+  { item = "moedas_prata",    min = 1, max = 3, weight = 25 },
+  { item = "cachimbo_antigo", min = 1, max = 1, weight = 15 },
+  { item = "fivela_cinto",    min = 1, max = 1, weight = 15 },
   { item = "documentos_velhos", min = 1, max = 1, weight = 10 },
 
-  { item = "anel_ouro",         min = 1, max = 1, weight = 6 },
-  { item = "colar_ouro",        min = 1, max = 1, weight = 4 },
-  { item = "moedas_ouro",       min = 1, max = 2, weight = 3 },
-  { item = "reliquia_antiga",   min = 1, max = 1, weight = 2 },
+  -- raros
+  { item = "anel_ouro",       min = 1, max = 1, weight = 6 },
+  { item = "colar_ouro",      min = 1, max = 1, weight = 4 },
+  { item = "moedas_ouro",     min = 1, max = 2, weight = 3 },
+  { item = "reliquia_antiga", min = 1, max = 1, weight = 2 },
 }
 
--- UTIL
+local function weightedRandom(tbl)
+  local total = 0
+  for _, v in ipairs(tbl) do total = total + (v.weight or 1) end
+  local r = math.random(1, total)
+  local acc = 0
+  for _, v in ipairs(tbl) do
+    acc = acc + (v.weight or 1)
+    if r <= acc then return v end
+  end
+  return tbl[#tbl]
+end
+
+
+
+
+local function giveItem(src, itemName, amount)
+  -- exports.vorp_inventory:addItem(src, itemName, amount)
+  TriggerEvent("vorpCore:addItem", src, itemName, amount)
+  print(("[COVAS] Dar item %s x%d para %d (placeholder)"):format(itemName, amount, src))
+
+  -- feedback pro client (opcional)
+  TriggerClientEvent("covas:notify", src, ("Você recebeu: ~g~%sx%d~s~"):format(itemName, amount))
+end
+
 local function notify(src, msg)
   TriggerClientEvent("covas:notify", src, msg)
 end
 
-local function weightedRandom(tbl)
-  local total = 0
-  for _, v in ipairs(tbl) do
-    total = total + (v.weight or 1)
-  end
+local SHOVEL_ITEM = "shovel"
 
-  local r = math.random(1, total)
-  local acc = 0
-
-  for _, v in ipairs(tbl) do
-    acc = acc + (v.weight or 1)
-    if r <= acc then
-      return v
-    end
-  end
-
-  return tbl[#tbl]
-end
-
-local function giveItem(src, itemName, amount)
-  exports.vorp_inventory:addItem(src, itemName, amount)
-  notify(src, ("Você recebeu: ~g~%sx%d~s~"):format(itemName, amount))
-end
-
-
--- INVENTÁRIO
-local function verifyShovel(src)
-  local count = exports.vorp_inventory:getItemCount(src, "shovel")
+local function hasItem(src, item)
+  local count = exports.vorp_inventory:getItemCount(src, item)
   return count and count > 0
 end
 
--- TRY START (client → server)
-RegisterNetEvent("covas:tryStart", function(covaIndex)
+-- client pode chamar quando começa (opcional, mas recomendado)
+RegisterNetEvent("covas:iniciarRoubo", function(covaIndex)
   local src = source
   local now = os.time()
 
-  -- valida pá
-  if not verifyShovel(src) then
-    notify(src, "Você precisa de uma ~r~PÁ~s~ para cavar.")
-    TriggerClientEvent("covas:cancelarRoubo", src)
+  if not hasItem(src, SHOVEL_ITEM) then
+    notify(src, "~r~Você precisa de uma pá para cavar esta cova.~s~")
     return
   end
 
-  -- cooldown
   if lastRob[src] and (now - lastRob[src]) < COOLDOWN_SEG then
     local falta = COOLDOWN_SEG - (now - lastRob[src])
     notify(src, ("~r~Aguarde %ds para roubar novamente.~s~"):format(falta))
     return
   end
 
-  -- já está roubando
-  if active[src] then
-    notify(src, "~r~Você já está roubando uma cova.~s~")
-    return
-  end
-
-  -- autoriza client iniciar
-  TriggerClientEvent("covas:startClient", src, covaIndex)
-end)
-
-
--- CLIENT CONFIRMA START
-RegisterNetEvent("covas:serverStarted", function(covaIndex)
-  local src = source
-  active[src] = {
-    startedAt = os.time(),
-    cova = tonumber(covaIndex)
-  }
-
+  active[src] = { startedAt = now, cova = tonumber(covaIndex) or 0 }
   notify(src, "~b~Você começou a roubar a cova...~s~")
 end)
 
--- FINALIZA ROUBO
+-- chamado no final do roubo (obrigatório)
 RegisterNetEvent("covas:finalizarRoubo", function(covaIndex)
   local src = source
   local now = os.time()
 
+  if not hasItem(src, SHOVEL_ITEM) then
+  notify(src, "~r~Roubo cancelado: pá não encontrada.~s~")
+  active[src] = nil
+  return
+end
+
+
   local st = active[src]
   if not st then
-    notify(src, "~r~Roubo inválido.~s~")
+    notify(src, "~r~Roubo inválido (não iniciado).~s~")
     return
   end
 
-  -- tempo mínimo
-  if (now - st.startedAt) < TEMPO_MIN then
-    notify(src, "~r~Roubo cancelado (tempo insuficiente).~s~")
+  -- valida tempo mínimo
+  local elapsed = now - st.startedAt
+  if elapsed < TEMPO_MAX then
+    notify(src, "~r~Roubo inválido (tempo insuficiente).~s~")
     active[src] = nil
     return
   end
 
-  -- cova divergente
+  -- valida o índice (opcional)
   if tonumber(covaIndex) ~= st.cova then
     notify(src, "~r~Roubo inválido (cova divergente).~s~")
     active[src] = nil
     return
   end
 
-  -- revalida pá (anti-exploit)
-  if not verifyShovel(src) then
-    notify(src, "~r~Você perdeu sua pá durante o roubo.~s~")
-    active[src] = nil
-    return
-  end
-
-  -- encerra estado e aplica cooldown
-  active[src] = nil
+  -- aplica cooldown
   lastRob[src] = now
+  active[src] = nil
 
-  -- chance de não achar nada
+  -- chance de não vir nada (ex: 20%)
   if math.random(1, 100) <= 20 then
     notify(src, "~y~Você não encontrou nada dessa vez.~s~")
     return
   end
 
-  -- sorteio
+  -- sorteio ponderado
   local picked = weightedRandom(lootTable)
-  local amount = math.random(picked.min, picked.max)
+  local amount = math.random(picked.min or 1, picked.max or 1)
 
   giveItem(src, picked.item, amount)
 end)
 
-
--- CANCELAMENTO
+-- cancelamento (opcional)
 RegisterNetEvent("covas:cancelarRoubo", function()
   local src = source
   active[src] = nil
 end)
 
--- CLEANUP
 AddEventHandler("playerDropped", function()
   local src = source
   active[src] = nil
 end)
+
+
+RegisterCommand("testcova", function(source)
+  if source == 0 then
+    print("[FRP_COVA] /testcova foi executado no CONSOLE. Use no chat do jogador: /testcova")
+    return
+  end
+
+  local src = source
+  local picked = weightedRandom(lootTable)
+  local amount = math.random(picked.min or 1, picked.max or 1)
+
+  print(("[FRP_COVA] CMD /testcova -> %s x%d para %d"):format(picked.item, amount, src))
+
+  -- usa o export (mais confiável no VORP recipe)
+  exports.vorp_inventory:addItem(src, picked.item, amount)
+
+  -- notify (só vai aparecer se seu client tiver covas:notify)
+  TriggerClientEvent("covas:notify", src, ("(TESTE) Você recebeu: ~g~%sx%d~s~"):format(picked.item, amount))
+end, false)
