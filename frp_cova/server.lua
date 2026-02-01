@@ -158,7 +158,12 @@ end)
 -- cancelamento (opcional)
 RegisterNetEvent("covas:cancelarRoubo", function()
   local src = source
-  active[src] = nil
+
+  if active[src] then
+    active[src] = nil
+    TriggerClientEvent("covas:cancelarRoubo", src)
+    notify(src, "~r~Você cancelou o roubo de covas!~s~")
+  end
 end)
 
 AddEventHandler("playerDropped", function()

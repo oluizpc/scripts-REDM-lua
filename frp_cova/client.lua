@@ -6,20 +6,16 @@ local KEY_ALT = 0xE8342FF2 -- ALT
 
 -- config
 local TEMPO_MAX = 15
-local HINT_TIME = 1500 
-local ROB_HINT_COOLDOWN = 1000 
 
 -- state
-local hintVisible = false
-local lastRobHint = 0
 local roubando = false
 local startTimeRoubando = 0
 local covaAtual = 0
 local aguardandoAprovacao = false
 local aguardoStartedAt = 0
-local paObjeto = nil -- Variável para controlar o objeto da pá
+local paObjeto = nil
 
--- Coordenadas atualizadas
+-- Coordenadas
 local covas = {
     vector3(2401.10, -1112.33, 46.48),
     vector3(2391.55, -1104.50, 46.45),
@@ -28,173 +24,182 @@ local covas = {
     vector3(-959.74, -1197.96, 56.28),
     vector3(-246.20, 812.63, 122.58),
     vector3(-954.60, -1203.91, 55.53),
-    vector3(-241.07, 809.29, 122.86), 
+    vector3(-241.07, 809.29, 122.86),
     vector3(-248.60, 817.72, 122.42),
     vector3(-234.05, 818.74, 124.28),
 }
 
--- FUNÇÕES DE ANIMAÇÃO E OBJETO (SISTEMA DA PÁ)
+-- TEXTO 3D REAL (REDM SAFE) - FLUTUANDO
+local function DrawText3DWorld(x, y, z, text)
+    local camCoords = GetGameplayCamCoord()
+    local dist = #(vector3(x, y, z) - camCoords)
+    if dist < 0.5 then dist = 0.5 end
+
+    local scale = (1.0 / dist) * 2.0
+    local fov = (1.0 / GetGameplayCamFov()) * 100.0
+    scale = scale * fov
+
+    -- texto
+    SetTextScale(0.0 * scale, 0.30 * scale)
+    SetTextFontForCurrentCommand(0)
+    SetTextColor(255, 255, 255, 215) -- ✅ RedM: SetTextColor (não SetTextColour)
+    SetTextCentre(true)
+
+    SetDrawOrigin(x, y, z, 0)
+    local str = CreateVarString(10, "LITERAL_STRING", text)
+    DisplayText(str, 0.0, 0.0)
+    ClearDrawOrigin()
+end
+
+-- FUNÇÕES DE ANIMAÇÃO / PÁ
 local function IniciarAnimacaoEscavar(ped)
-    -- Vamos manter a pá na mão só para ver se o attach continua ok
     local shovelHash = GetHashKey("p_shovel01x")
     RequestModel(shovelHash)
     while not HasModelLoaded(shovelHash) do Citizen.Wait(10) end
 
     local coords = GetEntityCoords(ped)
     paObjeto = CreateObject(shovelHash, coords.x, coords.y, coords.z, true, true, false)
-    AttachEntityToEntity(paObjeto, ped, GetEntityBoneIndexByName(ped, "SKEL_R_HAND"), 0.0, 0.0, 0.0, 0.0, 90.0, 0.0, true, true, false, true, 1, true)
+    AttachEntityToEntity(
+        paObjeto,
+        ped,
+        GetEntityBoneIndexByName(ped, "SKEL_R_HAND"),
+        0.0, 0.0, 0.0,
+        0.0, 90.0, 0.0,
+        true, true, false, true, 1, true
+    )
 
-    -- CONFIGURAÇÃO DO TESTE
     local animDict = "amb_camp@world_camp_dynamic_fire@loghold@male_a@react_look@loop@generic"
-    local animName = "react_look_front_loop" -- Escolhi uma da sua lista
+    local animName = "react_look_front_loop"
 
-    -- Carregamento
     RequestAnimDict(animDict)
     while not HasAnimDictLoaded(animDict) do
-        print("[FRP_COVA] Aguardando carregar dicionário de teste...")
-        Citizen.Wait(100)
+        Citizen.Wait(50)
     end
 
-    -- Execução forçada
     ClearPedTasksImmediately(ped)
     TaskPlayAnim(ped, animDict, animName, 8.0, -8.0, -1, 1, 0, false, false, false)
-    
-    print("[FRP_COVA] Teste de animação disparado: " .. animName)
 end
 
 local function PararAnimacao(ped)
-    ClearPedTasksImmediately(ped) 
-
+    ClearPedTasksImmediately(ped)
     if paObjeto and DoesEntityExist(paObjeto) then
         DeleteObject(paObjeto)
         paObjeto = nil
     end
 end
 
--- FUNÇÃO DE MARKER
-local function DrawCovaMarker(x, y, z)
-    Citizen.InvokeNative(0x2A32FAA57B937173, 0x6903B113, 
-        x, y, z - 1.0, 
-        0.0, 0.0, 0.0, 
-        0.0, 0.0, 0.0, 
-        2.0, 2.0, 1.5, 
-        0, 0, 255, 180, 
-        false, true, 2, 
-        false, nil, nil, false
-    )
-end
 
--- CONTROLES E EVENTOS
-RegisterNetEvent("covas:notify", function(msg)
-    TriggerEvent("vorp:TipRight", msg, 4000)
-end)
-
+-- CONTROLES
 local function LockPlayerControls()
     DisableAllControlActions(0)
     EnableControlAction(0, 0xA987235F, true) -- LOOK_LR
     EnableControlAction(0, 0xD2047988, true) -- LOOK_UD
-    EnableControlAction(0, KEY_ALT, true)
+    EnableControlAction(0, KEY_ALT, true)    -- ALT cancelar
 end
 
+-- ROUBO (STATE)
 local function StartRoubo(ped, idx)
     roubando = true
     startTimeRoubando = GetGameTimer()
     covaAtual = idx
-
     IniciarAnimacaoEscavar(ped)
-
-    print("[FRP_COVA] Roubo iniciado. Controles travados via script.")
 end
 
 local function StopRoubo(ped)
     roubando = false
     startTimeRoubando = 0
     covaAtual = 0
-
     FreezeEntityPosition(ped, false)
-
     PararAnimacao(ped)
-    print("[FRP_COVA] Roubo finalizado/cancelado.")
 end
 
+-- EVENTOS DO SERVER
 RegisterNetEvent("covas:inicioAprovado", function(idx)
     aguardandoAprovacao = false
     StartRoubo(PlayerPedId(), tonumber(idx))
-end)
+end)    
 
 RegisterNetEvent("covas:cancelarRoubo", function()
     aguardandoAprovacao = false
     if roubando then StopRoubo(PlayerPedId()) end
 end)
 
+RegisterNetEvent("covas:notify", function(msg, tempo)
+    -- TipRight no canto direito (igual era)
+    TriggerEvent("vorp:TipRight", msg, tempo or 4000)
+end)
+
 -- LOOP PRINCIPAL
 Citizen.CreateThread(function()
     while true do
-        local sleep = 1000
+        local sleep = 900
         local ped = PlayerPedId()
         local p = GetEntityCoords(ped)
 
         if not roubando then
-            local nearAnyCova = false
+            -- timeout da aprovação
+            if aguardandoAprovacao and (GetGameTimer() - aguardoStartedAt > 3000) then
+                aguardandoAprovacao = false
+                covaAtual = 0
+            end
 
             for i = 1, #covas do
                 local c = covas[i]
                 local dist = Vdist(p.x, p.y, p.z, c.x, c.y, c.z)
 
-                if dist < 8.0 then
+                if dist < 5.0 then
                     sleep = 0
-                    DrawCovaMarker(c.x, c.y, c.z)
 
-                    if dist < 2.0 then
-                        nearAnyCova = true
-                        if not hintVisible then
-                            hintVisible = true
-                            TriggerEvent("vorp:TipRight", "Pressione [E] para roubar a cova", HINT_TIME)
-                        end
+                    DrawText3DWorld(c.x, c.y, c.z + 0.10, "PRESSIONE [E] PARA ROUBAR A COVA")
 
-                        if IsControlJustReleased(0, KEY_E) and not aguardandoAprovacao then
-                            aguardandoAprovacao = true
-                            aguardoStartedAt = GetGameTimer()
-                            covaAtual = i
-                            TriggerServerEvent("covas:iniciarRoubo", i)
-                        end
+                    if aguardandoAprovacao and covaAtual == i then
+                        DrawText3DWorld(c.x, c.y, c.z + 0.95, "Aguardando aprovacao...")
+                    end
+
+                    if dist < 2.0 and IsControlJustReleased(0, KEY_E) and not aguardandoAprovacao then
+                        aguardandoAprovacao = true
+                        aguardoStartedAt = GetGameTimer()
+                        covaAtual = i
+                        TriggerServerEvent("covas:iniciarRoubo", i)
                     end
                 end
-            end
-            if not nearAnyCova then hintVisible = false end
-            if aguardandoAprovacao and (GetGameTimer() - aguardoStartedAt > 3000) then
-                aguardandoAprovacao = false
             end
         else
             sleep = 0
             LockPlayerControls()
-            
-            local calculaTimer = (GetGameTimer() - startTimeRoubando) / 1000.0
-            local now = GetGameTimer()
 
-            if now - lastRobHint > ROB_HINT_COOLDOWN then
-                lastRobHint = now
-                TriggerEvent("vorp:TipRight", ("Roubando... %ds/%ds | ALT cancelar"):format(math.floor(calculaTimer), TEMPO_MAX), 1000)
+            local calculaTimer = (GetGameTimer() - startTimeRoubando) / 1000.0
+            local c = covas[covaAtual]
+
+            if c then
+                DrawText3DWorld(c.x, c.y, c.z + .15, ("ESCAVANDO... %ds/%ds"):format(math.floor(calculaTimer), TEMPO_MAX))
+                DrawText3DWorld(c.x, c.y, c.z + 0.10, "ALT para cancelar")
             end
 
             if IsControlJustPressed(0, KEY_ALT) then
                 StopRoubo(ped)
                 TriggerServerEvent("covas:cancelarRoubo")
-                TriggerEvent("vorp:TipRight", "~r~Você cancelou o roubo!", 3000)
             end
 
             if calculaTimer >= TEMPO_MAX then
                 local idx = covaAtual
                 StopRoubo(ped)
-                TriggerEvent("vorp:TipRight", "~g~Você terminou de roubar a cova!", 3000)
                 TriggerServerEvent("covas:finalizarRoubo", idx)
             end
         end
-        Citizen.Wait(sleep)
+
+        -- quando estiver desenhando texto, precisa rodar todo frame
+        if sleep == 0 then
+            Citizen.Wait(0)
+        else
+            Citizen.Wait(sleep)
+        end
     end
 end)
 
--- COMANDOS (TP, PEGARCOORDS, BLIPS)
+-- ==============================
+-- COMANDOS (UTILIDADE)
+-- ==============================
 RegisterCommand("tpcova", function(source, args)
     local idx = tonumber(args[1])
     if idx and covas[idx] then
@@ -216,23 +221,4 @@ RegisterCommand("pegarcoords", function()
     print(formatado)
     print("------------------------------------------")
     TriggerEvent("vorp:TipRight", "Coordenada no F8!", 3000)
-end)
-
-local covaBlips = {}
-local function CreateCovaBlips()
-    for _, b in ipairs(covaBlips) do if DoesBlipExist(b) then RemoveBlip(b) end end
-    covaBlips = {}
-    for i = 1, #covas do
-        local c = covas[i]
-        local blip = Citizen.InvokeNative(0x554D9D53F696D002, 1664425300, c.x, c.y, c.z)
-        SetBlipSprite(blip, 587827268, true)
-        SetBlipScale(blip, 0.8)
-        Citizen.InvokeNative(0x9CB1A1623062F402, blip, ("Cova Suspeita #%d"):format(i))
-        table.insert(covaBlips, blip)
-    end
-end
-
-Citizen.CreateThread(function()
-    Citizen.Wait(2000)
-    CreateCovaBlips()
 end)
