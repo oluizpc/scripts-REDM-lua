@@ -6,6 +6,11 @@ local KEY_ALT = 0xE8342FF2 -- ALT
 
 -- config
 local TEMPO_MAX = 15
+local COOLDOWN_SEG = 60 -- cooldown após roubar (segundos)
+
+-- cooldown flutuante (por cova)
+-- cooldownCovas[i] = expireGameTime (ms)
+local cooldownCovas = {}
 
 -- state
 local roubando = false
@@ -40,6 +45,12 @@ local function ResetRouboState()
     aguardandoAprovacao = false
     aguardoStartedAt = 0
     covaAtual = 0
+end
+
+-- (helper) cooldown ativo?
+local function IsCovaOnCooldown(idx)
+    local exp = cooldownCovas[idx]
+    return exp and exp > GetGameTimer()
 end
 
 -- TEXTO 3D REAL (REDM SAFE) - FLUTUANDO
@@ -143,6 +154,12 @@ RegisterNetEvent("covas:inicioAprovado", function(idx)
         return
     end
 
+    -- se a cova entrou em cooldown local enquanto aguardava, não inicia
+    if IsCovaOnCooldown(covaIdx) then
+        ResetRouboState()
+        return
+    end
+
     -- se não estiver perto da cova aprovada, NÃO inicia (evita roubo fantasma após respawn)
     local p = GetEntityCoords(ped)
     local c = covas[covaIdx]
@@ -156,6 +173,14 @@ RegisterNetEvent("covas:inicioAprovado", function(idx)
     StartRoubo(ped, covaIdx)
 end)
 
+-- server manda cooldown (sincroniza/override)
+RegisterNetEvent("covas:cooldown", function(covaIdx, segundos)
+    covaIdx = tonumber(covaIdx)
+    segundos = tonumber(segundos)
+    if not covaIdx or not segundos then return end
+    cooldownCovas[covaIdx] = GetGameTimer() + (segundos * 1000)
+end)
+
 RegisterNetEvent("covas:cancelarRoubo", function()
     aguardandoAprovacao = false
     if roubando then StopRoubo(PlayerPedId()) end
@@ -165,7 +190,9 @@ RegisterNetEvent("covas:notify", function(msg, tempo)
     TriggerEvent("vorp:TipRight", msg, tempo or 4000)
 end)
 
+-- ==============================
 -- LOOP PRINCIPAL
+-- ==============================
 Citizen.CreateThread(function()
     while true do
         local sleep = 900
@@ -179,7 +206,10 @@ Citizen.CreateThread(function()
                 -- avisa server pra limpar estado lá também
                 TriggerServerEvent("covas:cancelarRoubo")
             end
+            -- opcional: se morreu, não deixa cooldown travado (seu RP: morreu = perde tudo)
+            cooldownCovas = {}
             Citizen.Wait(500)
+
         else
             if not roubando then
                 -- timeout da aprovação
@@ -195,21 +225,48 @@ Citizen.CreateThread(function()
                     if dist < 5.0 then
                         sleep = 0
 
-                        DrawText3DWorld(c.x, c.y, c.z + 0.10, "PRESSIONE [E] PARA ROUBAR A COVA")
+                        local expire = cooldownCovas[i]
 
-                        if aguardandoAprovacao and covaAtual == i then
-                            DrawText3DWorld(c.x, c.y, c.z + 0.95, "Aguardando aprovacao...")
-                        end
+                        -- COOLDOWN ATIVO → mostra SÓ cooldown
+                        if expire and expire > GetGameTimer() then
+                            local restante = math.ceil((expire - GetGameTimer()) / 1000)
+                            local min = math.floor(restante / 60)
+                            local sec = restante % 60
 
-                        -- ✅ não deixa iniciar se estiver morto (redundância segura)
-                        if dist < 2.0 and IsControlJustReleased(0, KEY_E) and not aguardandoAprovacao then
-                            aguardandoAprovacao = true
-                            aguardoStartedAt = GetGameTimer()
-                            covaAtual = i
-                            TriggerServerEvent("covas:iniciarRoubo", i)
+                            DrawText3DWorld(
+                                c.x, c.y, c.z + 0.12,
+                                ("AGUARDE %02d:%02d PARA ROUBAR NOVAMENTE"):format(min, sec)
+                            )
+
+                        -- SEM COOLDOWN → interação normal
+                        else
+                            cooldownCovas[i] = nil
+
+                            DrawText3DWorld(
+                                c.x, c.y, c.z + 0.10,
+                                "PRESSIONE [E] PARA ROUBAR A COVA"
+                            )
+
+                            if aguardandoAprovacao and covaAtual == i then
+                                DrawText3DWorld(
+                                    c.x, c.y, c.z + 0.95,
+                                    "Aguardando aprovação..."
+                                )
+                            end
+
+                            if dist < 2.0
+                                and IsControlJustReleased(0, KEY_E)
+                                and not aguardandoAprovacao
+                            then
+                                aguardandoAprovacao = true
+                                aguardoStartedAt = GetGameTimer()
+                                covaAtual = i
+                                TriggerServerEvent("covas:iniciarRoubo", i)
+                            end
                         end
                     end
                 end
+
             else
                 sleep = 0
                 LockPlayerControls()
@@ -230,6 +287,10 @@ Citizen.CreateThread(function()
                 if calculaTimer >= TEMPO_MAX then
                     local idx = covaAtual
                     StopRoubo(ped)
+
+                    -- entra em cooldown local imediatamente (UX)
+                    cooldownCovas[idx] = GetGameTimer() + (COOLDOWN_SEG * 1000)
+
                     TriggerServerEvent("covas:finalizarRoubo", idx)
                 end
             end
@@ -270,7 +331,7 @@ RegisterCommand("pegarcoords", function()
     TriggerEvent("vorp:TipRight", "Coordenada no F8!", 3000)
 end)
 
-
+-- comando de teste (remova se quiser)
 RegisterCommand("suicide", function()
     local ped = PlayerPedId()
     SetEntityHealth(ped, 0)
