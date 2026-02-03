@@ -112,4 +112,26 @@ Clone o repositório:
 
 ```bash
 git clone https://github.com/oluizpc/scripts-REDM-lua.git
+```
+
+Copie o script desejado para sua pasta resources.
+
+
+Adicione no server.cfg:
+```bash
+ensure frp_cova
+ensure drp_drugdealer
+```
+
+## Observação Final
+
+Este repositório existe para aprender fazendo.
+
+Se você também está estudando RedM, Lua ou VORP use como referência.
+
+## Autor
+Luiz Paullo
+Estudos em RedM • Lua • VORP • Arquitetura Server-Side
+
+## Código se aprende escrevendo, errando e refatorando.
 
